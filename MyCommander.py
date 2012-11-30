@@ -1,4 +1,5 @@
 __author__ = 'Johann Jungbauer'
+__version__ = "0.1"
 
 import random
 
