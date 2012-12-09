@@ -4,6 +4,10 @@ Author: Johann Jungbauer
 
 Blerb: This repo is for my code for the AISandbox.com/AIGameDev.com Capture the Flag Commander AI competition.
 
+VERSION 0.2 ___
+[Dec 9, 2012]
+This version strips out the supporter code. Adds a rush mode that is triggered be all enemies being dead in the respawn window.
+
 VERSION 0.1 ___
 [Nov 23, 2012]
 This version is pretty much the Balanced AI example with a slight tweak on how the flag carrier moves when the flag is in hand.

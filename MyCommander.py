@@ -1,5 +1,5 @@
 __author__ = 'Johann Jungbauer'
-__version__ = "0.1"
+__version__ = "0.2"
 
 import random
 
@@ -21,7 +21,6 @@ class JJCommander(Commander):
 
     def initialize(self):
         self.attacker = None
-        self.supporter = None
         self.defender = None
         self.verbose = True
 
@@ -36,17 +35,24 @@ class JJCommander(Commander):
         self.right = Vector2(d.y, -d.x).normalized()
         self.front = Vector2(d.x, d.y).normalized()
 
+        self.respawnTime = self.game.match.timeToNextRespawn
+
 
     def tick(self):
+        if self.enemiesSeen() == False and self.game.match.timeToNextRespawn > 10:
+            if self.countDeadEnemies() == len(self.game.enemyTeam.members):
+                self.rushMode()
+            else:
+                self.normalMode()
+        else:
+            self.normalMode()
 
-        self.countEnemies()
 
+
+    def normalMode(self):
         if self.attacker and self.attacker.health <= 0:
             # the attacker is dead we'll pick another when available
             self.attacker = None
-
-        if self.supporter and self.supporter.health <=0:
-            self.supporter = None
 
         if self.defender and (self.defender.health <= 0 or self.defender.flag):
             # the defender is dead we'll pick another when available
@@ -56,35 +62,12 @@ class JJCommander(Commander):
             if (self.defender == None or self.defender == bot) and not bot.flag:
                 self.defender = bot
 
-                # Stand on a random position in a box of 4m around the flag.
-                targetPosition = self.game.team.flagSpawnLocation
-                targetMin = targetPosition - Vector2(2.0, 2.0)
-                targetMax = targetPosition + Vector2(2.0, 2.0)
-                goal = self.level.findRandomFreePositionInBox([targetMin, targetMax])
-
-                if (goal - bot.position).length() > 8.0:
-                    self.issue(commands.Charge, self.defender, goal, description = 'running to defend')
-                else:
-                    self.issue(commands.Defend, self.defender, (self.middle - bot.position), description = 'turning to defend')
+                self.defenderLogic()
 
             elif self.attacker == None or self.attacker == bot or bot.flag:
-                if self.attacker == None and self.supporter != None:
-                    self.attacker = self.supporter # this will (I suspect) interrupt the supporter bot
-                    self.supporter = None
-                else:
                     # Our attacking bot
                     self.attacker = bot
-
-                self.attackLogic()
-
-            elif self.supporter == None or self.supporter == bot:
-                self.supporter = bot
-                # attacker should never be NONE by this point
-                #TODO Not sure if this is the best way to choose a supporter. Maybe find the nearest random first
-                target = self.attacker.position
-                self.issue(commands.Attack, self.supporter, target, description = 'supporting attacker', lookAt=target)
-
-
+                    self.attackerLogic()
             else:
                 # All our other (random) bots
 
@@ -97,12 +80,22 @@ class JJCommander(Commander):
                 if target:
                     self.issue(commands.Attack, bot, target, description = 'random patrol')
 
+    def rushMode(self):
+        for bot in self.game.bots_available:
+            if bot == self.defender:
+                #print('%s is defender' % bot.name)
+                self.defenderLogic()
+            elif bot.flag:
+                self.issue(commands.Charge, bot, self.game.team.flagScoreLocation, description = 'running home')
+            else:
+                self.issue(commands.Charge, bot, self.game.enemyTeam.flag.position, description = 'RUSH enemy flag')
+
     def getFlankingPosition(self, bot, target):
         flanks = [target + f * 16.0 for f in [self.left, self.right]]
         options = map(lambda f: self.level.findNearestFreePosition(f), flanks)
         return sorted(options, key = lambda p: (bot.position - p).length())[0]
 
-    def attackLogic(self):
+    def attackerLogic(self):
         if self.attacker.flag:
             # Tell the flag carrier to run home!
             target = self.game.team.flagScoreLocation
@@ -116,18 +109,52 @@ class JJCommander(Commander):
                 flank = self.level.findNearestFreePosition(flank)
                 self.issue(commands.Move, self.attacker, flank, description = 'running to flank')
 
-    def countEnemies(self):
-        #len(self.game.enemyTeam.members) #gives total enemy count
+    def defenderLogic(self):
+        # Stand on a random position in a box of 4m around the flag.
+        targetPosition = self.game.team.flagSpawnLocation
+        targetMin = targetPosition - Vector2(2.0, 2.0)
+        targetMax = targetPosition + Vector2(2.0, 2.0)
+        goal = self.level.findRandomFreePositionInBox([targetMin, targetMax])
+
+        if (goal - self.defender.position).length() > 8.0:
+            self.issue(commands.Charge, self.defender, goal, description = 'running to defend')
+        else:
+            self.issue(commands.Defend, self.defender, (self.middle - self.defender.position), description = 'turning to defend')
+
+    def countDeadEnemies(self):
         count =0
         for event in reversed(self.game.match.combatEvents):
-            if event.type == MatchCombatEvent.TYPE_KILLED:
-                #if self.isEnemy(self.game.enemyTeam.members, event.subject.name):
+            if event.time > (self.game.match.timePassed + self.game.match.timeToNextRespawn - self.respawnTime):
+                if event.type == MatchCombatEvent.TYPE_KILLED:
+                    if self.isInList(self.game.enemyTeam.members, lambda BotInfo: BotInfo.name == event.subject.name):
+                        count += 1
+            else:
+                break
+            """if event.type == MatchCombatEvent.TYPE_KILLED:
                 if self.isInList(self.game.enemyTeam.members, lambda BotInfo: BotInfo.name == event.subject.name):
-                    print(event.subject.name)
+                    if event.time > (self.game.match.timePassed + self.game.match.timeToNextRespawn - self.respawnTime):
+                        count += 1"""
 
+        return count
+
+    def enemiesSeen(self):
+        for bot in self.game.bots_alive:
+            if len(bot.visibleEnemies) > 0:
+                for enemy in bot.visibleEnemies:
+                    if enemy.health > 0:
+                        return True
+
+        return False
+
+
+    def countSeenEnemies(self):
+        #TODO This count doesn't actually work
+        count = 0
+        for enemy in self.game.enemyTeam.members:
+            if enemy.health > 0:
                 count += 1
 
-        print(count)
+        return count
 
     def isInList(self, list, filter):
         for x in list:
@@ -140,3 +167,9 @@ class JJCommander(Commander):
             if x.name == name:
                 return True
         return False
+
+#TODO remove this before submission
+class DummyCommander(Commander):
+
+    def tick(self):
+        pass
