@@ -1,5 +1,5 @@
 __author__ = 'Johann Jungbauer'
-__version__ = "0.2"
+__version__ = "0.3"
 
 import random
 
@@ -15,19 +15,17 @@ def contains(area, position):
     return position.x >= start.x and position.y >= start.y and position.x <= finish.x and position.y <= finish.y
 
 class JJCommander(Commander):
-    """Modified from original Balanced Commander example
-        - flag carrier charges home instead of just moving home
-        - The lead attacker now has a supporter paired with it"""
 
     def initialize(self):
         self.attacker = None
-        self.defender = None
+        self.defenderSquad = [None,None] #defender pair
         self.verbose = True
 
         # Calculate flag positions and store the middle.
         ours = self.game.team.flag.position
         theirs = self.game.enemyTeam.flag.position
         self.middle = (theirs + ours) / 2.0
+        self.centre = Vector2(self.level.width, self.level.height) / 2.0
 
         # Now figure out the flaking directions, assumed perpendicular.
         d = (ours - theirs)
@@ -54,15 +52,16 @@ class JJCommander(Commander):
             # the attacker is dead we'll pick another when available
             self.attacker = None
 
-        if self.defender and (self.defender.health <= 0 or self.defender.flag):
-            # the defender is dead we'll pick another when available
-            self.defender = None
+        self.cullDefenseSquad()
 
         for bot in self.game.bots_available:
-            if (self.defender == None or self.defender == bot) and not bot.flag:
-                self.defender = bot
 
-                self.defenderLogic()
+            def_opening, def_pos = self.checkDefenseSquadOpenings()
+            if (def_opening or self.isInList(self.defenderSquad, lambda BotInfo:BotInfo == bot)) and not bot.flag:
+                if def_opening:
+                    self.defenderSquad[def_pos] = bot
+
+                self.defenderLogic(bot)
 
             elif self.attacker == None or self.attacker == bot or bot.flag:
                     # Our attacking bot
@@ -80,15 +79,33 @@ class JJCommander(Commander):
                 if target:
                     self.issue(commands.Attack, bot, target, description = 'random patrol')
 
+    def cullDefenseSquad(self):
+        for x in range(0,len(self.defenderSquad)):
+            if self.defenderSquad[x] and self.defenderSquad[x].health <= 0:
+                self.defenderSquad[x] = None
+
+    def checkDefenseSquadOpenings(self):
+        for x in range(0,len(self.defenderSquad)):
+            if self.defenderSquad[x] == None:
+                return True,x
+        return False,None
+
+
     def rushMode(self):
-        for bot in self.game.bots_available:
-            if bot == self.defender:
+        '''for bot in self.game.bots_available:
+            if self.isInList(self.defenderSquad, lambda BotInfo:BotInfo == bot):
                 #print('%s is defender' % bot.name)
-                self.defenderLogic()
+                self.defenderLogic(bot)
             elif bot.flag:
                 self.issue(commands.Charge, bot, self.game.team.flagScoreLocation, description = 'running home')
             else:
-                self.issue(commands.Charge, bot, self.game.enemyTeam.flag.position, description = 'RUSH enemy flag')
+                self.issue(commands.Charge, bot, self.game.enemyTeam.flag.position, description = 'RUSH enemy flag')'''
+        for bot in self.game.bots_alive:
+            if not self.isInList(self.defenderSquad, lambda BotInfo:BotInfo == bot) and (bot.state == BotInfo.STATE_IDLE or bot.state == BotInfo.STATE_MOVING):
+                if bot.flag:
+                    self.issue(commands.Charge, bot, self.game.team.flagScoreLocation, description = 'running home')
+                else:
+                    self.issue(commands.Charge, bot, self.game.enemyTeam.flag.position, description = 'RUSH enemy flag')
 
     def getFlankingPosition(self, bot, target):
         flanks = [target + f * 16.0 for f in [self.left, self.right]]
@@ -109,17 +126,20 @@ class JJCommander(Commander):
                 flank = self.level.findNearestFreePosition(flank)
                 self.issue(commands.Move, self.attacker, flank, description = 'running to flank')
 
-    def defenderLogic(self):
+    def defenderLogic(self, bot):
         # Stand on a random position in a box of 4m around the flag.
         targetPosition = self.game.team.flagSpawnLocation
         targetMin = targetPosition - Vector2(2.0, 2.0)
         targetMax = targetPosition + Vector2(2.0, 2.0)
         goal = self.level.findRandomFreePositionInBox([targetMin, targetMax])
 
-        if (goal - self.defender.position).length() > 8.0:
-            self.issue(commands.Charge, self.defender, goal, description = 'running to defend')
+        if (goal - bot.position).length() > 8.0:
+            self.issue(commands.Charge, bot, goal, description = 'running to defend')
         else:
-            self.issue(commands.Defend, self.defender, (self.middle - self.defender.position), description = 'turning to defend')
+            if bot == self.defenderSquad[0]:
+                self.issue(commands.Defend, bot, (self.middle - bot.position), description = 'turning to defend')
+            else:
+                self.issue(commands.Defend, bot, (self.centre - bot.position), description = 'turning to defend')
 
     def countDeadEnemies(self):
         count =0
@@ -167,9 +187,3 @@ class JJCommander(Commander):
             if x.name == name:
                 return True
         return False
-
-#TODO remove this before submission
-class DummyCommander(Commander):
-
-    def tick(self):
-        pass
